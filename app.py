@@ -6,15 +6,7 @@ from datetime import datetime
 from questions import QUESTIONS, CATEGORIES, LIKERT_LABELS
 from database import init_db, save_vorarbeiter, save_bewerber, get_all_vorarbeiter, get_all_bewerber, delete_vorarbeiter, delete_bewerber, reset_all
 from scoring import calculate_personal_scores, compute_benchmark, compute_match
-from email_utils import send_report
-
-try:
-    SMTP_USER = st.secrets.get("smtp_user", "")
-    SMTP_PASS = st.secrets.get("smtp_pass", "")
-except Exception:
-    SMTP_USER = ""
-    SMTP_PASS = ""
-REPORT_TO = "rosin.getz@gmail.com"
+from pdf_report import generate_pdf
 
 st.set_page_config(
     page_title="Mitarbeiter-Assessment Vorarbeiter",
@@ -79,22 +71,6 @@ with st.sidebar.expander("⚙️ Admin-Bereich", expanded=False):
                 st.rerun()
 
     if vor_data or bew_data:
-        if st.button("📧 Alle Daten per E-Mail", use_container_width=True):
-            export_data = {}
-            if vor_data:
-                export_data["vorarbeiter"] = [dict(r) for r in vor_data]
-            if bew_data:
-                export_data["bewerber"] = [dict(r) for r in bew_data]
-            summary = f"Export aller Daten ({datetime.now().strftime('%d.%m.%Y')})\n"
-            summary += f"Vorarbeiter: {len(vor_data)} Datensätze\n"
-            summary += f"Bewerber: {len(bew_data)} Datensätze\n"
-            try:
-                send_report(REPORT_TO, "Alle Assessment-Daten (Export)", summary, attachment_json=export_data, smtp_user=smtp_user, smtp_pass=smtp_pass)
-                st.toast("E-Mail mit Daten-Anhang gesendet!")
-            except Exception as e:
-                st.error(f"E-Mail-Fehler: {e}")
-
-    if vor_data or bew_data:
         if st.button("⚠️ Alle Daten löschen", type="secondary"):
             reset_all()
             st.rerun()
@@ -122,23 +98,6 @@ role = st.radio(
 )
 
 st.divider()
-
-st.sidebar.divider()
-with st.sidebar.expander("📧 E-Mail-Bericht", expanded=False):
-    smtp_user = st.text_input("Gmail-Adresse", value=st.session_state.get("smtp_user", SMTP_USER), placeholder="z.B. rosin.getz@gmail.com", key="smtp_user_input")
-    smtp_pass = st.text_input("App-Passwort", type="password", value=st.session_state.get("smtp_pass", SMTP_PASS), placeholder="16-stelliges App-Passwort", key="smtp_pass_input")
-    if st.button("Verbindung testen"):
-        try:
-            send_report(
-                recipient=REPORT_TO,
-                subject="Test – E-Mail-Verbindung funktioniert",
-                body_text="Verbindung erfolgreich. Deine Assessment-Berichte werden ab jetzt an diese Adresse gesendet.",
-                smtp_user=smtp_user,
-                smtp_pass=smtp_pass,
-            )
-            st.success("✅ Test-E-Mail gesendet!")
-        except Exception as e:
-            st.error(f"Fehler: {e}")
 
 if st.session_state.get("page") == "role_select":
     st.session_state.answers = {}
@@ -183,23 +142,11 @@ if submitted:
         st.success(f"✅ Daten gespeichert! Vielen Dank. (Datensatz #{new_count})")
         st.balloons()
         scores = calculate_personal_scores(answers)
-        lines = [f"Neuer Vorarbeiter-Datensatz #{new_count}"]
-        if profile_name:
-            lines.append(f"Name: {profile_name}")
-        lines.append(f"Zeitpunkt: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
-        lines.append("")
-        for cat in CATEGORIES:
-            lines.append(f"{cat}: {scores[cat]}/5")
-        lines.append("")
-        lines.append(f"Gesamtdatensätze: {new_count}")
-        body = "\n".join(lines)
-
-        if st.button("📧 Bericht per E-Mail senden", use_container_width=True):
-            try:
-                send_report(REPORT_TO, f"Neuer Vorarbeiter #{new_count}", body, smtp_user=smtp_user, smtp_pass=smtp_pass)
-                st.toast("E-Mail gesendet!")
-            except Exception as e:
-                st.error(f"E-Mail-Fehler: {e}")
+        bench = compute_benchmark(get_all_vorarbeiter()) or scores
+        overall, per_domain = compute_match(scores, bench)
+        pdf_bytes = generate_pdf(scores, bench, overall or 100, per_domain or {c: 100 for c in CATEGORIES}, answers)
+        filename = f"Vorarbeiter_{profile_name or new_count}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+        st.download_button("📄 PDF speichern", data=pdf_bytes, file_name=filename, mime="application/pdf", use_container_width=True)
 
     else:
         if not bench or len(get_all_vorarbeiter()) < 2:
@@ -287,22 +234,8 @@ if submitted:
                     st.progress((val - 1) / 4)
 
             st.divider()
-            if st.button("📧 Auswertung per E-Mail senden", use_container_width=True):
-                score_lines = []
-                for cat in CATEGORIES:
-                    pct = per_domain[cat]
-                    score_lines.append(f"  {cat}: {scores[cat]}/5 ({pct}%)")
-                body = (
-                    f"Bewerber-Auswertung vom {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
-                    f"{'='*40}\n"
-                    f"Gesamt-Übereinstimmung: {overall}%\n\n"
-                    f"Detail je Kategorie:\n" + "\n".join(score_lines) + "\n\n"
-                    f"Benchmark basiert auf {len(get_all_vorarbeiter())} Vorarbeiter-Datensätzen."
-                )
-                try:
-                    send_report(REPORT_TO, f"Bewerber-Auswertung – {overall}% Übereinstimmung", body, smtp_user=smtp_user, smtp_pass=smtp_pass)
-                    st.toast("E-Mail gesendet!")
-                except Exception as e:
-                    st.error(f"E-Mail-Fehler: {e}")
+            pdf_bytes = generate_pdf(scores, bench, overall, per_domain, answers)
+            filename = f"Bewerber_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+            st.download_button("📄 PDF speichern", data=pdf_bytes, file_name=filename, mime="application/pdf", use_container_width=True)
 
             st.session_state.page = "results"

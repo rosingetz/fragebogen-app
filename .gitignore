@@ -4,3 +4,4 @@ __pycache__/
 .DS_Store
 *.db
 data/responses.db
+.streamlit/secrets.toml
