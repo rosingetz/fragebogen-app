@@ -79,3 +79,8 @@ streamlit run app.py
 - [x] Admin-Bereich (Export, Löschen)
 - [ ] Phase 1: Datenerfassung Vorarbeiter
 - [ ] Phase 2: Bewerber-Matching mit Live-Visualisierung
+
+## Deployment
+- **GitHub**: https://github.com/rosingetz/fragebogen-app
+- **Lokal**: http://localhost:8501 (läuft aktuell im Hintergrund)
+- **Streamlit Cloud**: Einfach GitHub-Repo auf https://share.streamlit.io verbinden
